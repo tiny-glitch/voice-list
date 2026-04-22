@@ -48,6 +48,7 @@
       flex-direction: column;
       height: 100dvh;
       padding-top: var(--safe-top);
+      overflow: hidden;
     }
 
     /* ── Header ── */
@@ -58,7 +59,12 @@
       padding: 16px 18px 12px;
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg);
     }
+
 
     .header-left {
       display: flex;
@@ -89,12 +95,13 @@
       border-radius: 20px;
       padding: 5px 12px;
       cursor: pointer;
-      transition: color .15s, border-color .15s;
-      display: none;
+      transition: color .15s, border-color .15s, opacity .15s;
+      visibility: hidden;
+      opacity: 0;
       -webkit-tap-highlight-color: transparent;
     }
 
-    .clear-done-btn.visible { display: block; }
+    .clear-done-btn.visible { visibility: visible; opacity: 1; }
     .clear-done-btn:active { color: var(--text); border-color: var(--muted); }
 
     /* ── List area ── */
@@ -127,12 +134,15 @@
       gap: 12px;
       padding: 13px 16px;
       border-bottom: 1px solid var(--border);
+    }
+
+    .list-item.new-item {
       animation: slide-in .15s ease-out;
     }
 
     @keyframes slide-in {
-      from { transform: translateY(-5px); opacity: 0; }
-      to   { transform: translateY(0);    opacity: 1; }
+      from { transform: translateY(5px); opacity: 0; }
+      to   { transform: translateY(0);   opacity: 1; }
     }
 
     .list-item.done { opacity: 0.4; }
@@ -430,6 +440,7 @@
   <header>
     <div class="header-left">
       <span class="app-name">voicelist</span>
+      <span style="font-size:10px;color:#333;font-family:monospace;">v14</span>
       <span class="item-count" id="item-count"></span>
     </div>
     <button class="clear-done-btn" id="clear-done-btn" onclick="clearDone()">clear done</button>
@@ -487,6 +498,7 @@
     let restartCount = 0;
     const MAX_RESTARTS = 5;
     let finalTranscript = '';
+    let committedIndex = 0;  // tracks which result indices already committed
 
     // ── Persistence ────────────────────────────────────────
     function load() {
@@ -499,7 +511,7 @@
     function save() {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-      } catch(e) { showToast('Storage full'); }
+      } catch(e) { showToast('storage full'); }
     }
 
     // ── Parsing ────────────────────────────────────────────
@@ -549,26 +561,27 @@
       const parsed = texts.flatMap(parseText);
       if (!parsed.length) return;
       if (items.length >= MAX_ITEMS) {
-        showToast('List full — clear some items first (500 max)');
+        showToast('list full — clear some items first (500 max)');
         return;
       }
       // If adding would exceed cap, trim to fit
       const slots = MAX_ITEMS - items.length;
       const allowed = parsed.slice(0, slots);
       if (allowed.length < parsed.length) {
-        showToast('List full — only ' + allowed.length + ' of ' + parsed.length + ' items added');
+        showToast('list full — only ' + allowed.length + ' of ' + parsed.length + ' items added');
       }
       const newItems = allowed.map(text => ({
         id: Date.now() + '-' + Math.random().toString(36).slice(2),
         text,
         done: false
       }));
-      items = [...newItems, ...items];
+      items = [...items, ...newItems];
       save();
       render();
       if (allowed.length === parsed.length) {
         showToast(allowed.length === 1 ? '1 item added' : allowed.length + ' items added');
       }
+      scrollToBottom();
     }
 
     function toggleDone(id) {
@@ -586,7 +599,12 @@
       items = items.filter(i => !i.done);
       save();
       render();
-      showToast('Done items cleared');
+      showToast('done items cleared');
+    }
+
+    function scrollToBottom() {
+      const area = document.getElementById('list-area');
+      requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
     }
 
     // ── Render ─────────────────────────────────────────────
@@ -638,7 +656,9 @@
 
     function makeItemEl(item) {
       const div = document.createElement('div');
-      div.className = 'list-item' + (item.done ? ' done' : '');
+      div.className = 'list-item new-item' + (item.done ? ' done' : '');
+      // Remove animation class after it plays so re-renders don't re-trigger it
+      div.addEventListener('animationend', () => div.classList.remove('new-item'), { once: true });
       div.dataset.id = item.id;
       div.style.flexWrap = 'wrap';
 
@@ -760,7 +780,7 @@
       if (!SpeechAPI) {
         document.getElementById('mic-btn').classList.add('disabled');
         document.getElementById('mic-btn').onclick = null;
-        showError('Voice input requires Chrome — text input still works');
+        showError('voice input not supported in this browser — text input still works');
         return;
       }
 
@@ -770,9 +790,30 @@
       recognition.lang = navigator.language || 'en-AU';
       recognition.maxAlternatives = 1;
 
+      // Chrome Android fires multiple final results for the same utterance as
+      // it refines confidence. We use two guards:
+      //   1. committedChunks — exact-match dedup across the session
+      //   2. lockUntil — time-window lock so revisions (e.g. "skim" -> "skim milk")
+      //      within 1.2s of a commit are ignored unless clearly new content
+      let committedChunks = new Set();
+      let lastCommitTime = 0;
+      let lastCommitKey = '';
+      let isRestart = false;
+      let firstResultTimer = null;
+      let pendingFirstChunk = null;
+
       recognition.onstart = () => {
-        finalTranscript = '';
-        restartCount = 0;
+        if (!isRestart) {
+          finalTranscript = '';
+          committedIndex = 0;
+          committedChunks = new Set();
+          lastCommitTime = 0;
+          lastCommitKey = '';
+          restartCount = 0;
+          pendingFirstChunk = null;
+          if (firstResultTimer) { clearTimeout(firstResultTimer); firstResultTimer = null; }
+        }
+        isRestart = false;
         setRecording(true);
         setPreview('Listening…');
       };
@@ -781,29 +822,76 @@
         let interim = '';
         for (let i = e.resultIndex; i < e.results.length; i++) {
           if (e.results[i].isFinal) {
-            // Each final result is a natural speech chunk (phrase said before a pause).
-            // Parse and commit it immediately as its own item(s) rather than
-            // accumulating into one big transcript.
-            const chunk = e.results[i][0].transcript.trim();
-            if (chunk) {
-              finalTranscript += chunk + ' ';
-              addItems([chunk]);
+            let chunk = e.results[i][0].transcript.trim();
+            if (!chunk) continue;
+            // Strip trailing orphan conjunctions Chrome emits alone
+            chunk = chunk.replace(/\s*(\band\b|\bor\b|\bthe\b)\s*$/i, '').trim();
+            if (chunk.length < 2) continue;
+
+            const key = chunk.toLowerCase().replace(/\s+/g, ' ');
+            const now = Date.now();
+
+            // Exact duplicate — always skip
+            if (committedChunks.has(key)) continue;
+
+            // Within the lock window — skip if this looks like a revision of
+            // the last commit (last key is a prefix of new key, or vice versa)
+            if (now - lastCommitTime < 1200) {
+              const isRevision = key.startsWith(lastCommitKey) || lastCommitKey.startsWith(key);
+              if (isRevision) continue;
             }
+
+            // Hold the first result for 800ms — Chrome often revises it.
+            // If a revision arrives within that window, restart the timer.
+            // If something genuinely new arrives, flush the pending first chunk first.
+            if (!finalTranscript && pendingFirstChunk === null) {
+              pendingFirstChunk = { chunk, key };
+              firstResultTimer = setTimeout(() => {
+                if (pendingFirstChunk) {
+                  const p = pendingFirstChunk; pendingFirstChunk = null;
+                  committedChunks.add(p.key); lastCommitTime = Date.now(); lastCommitKey = p.key;
+                  finalTranscript += p.chunk + ' '; addItems([p.chunk]);
+                }
+              }, 800);
+              continue;
+            }
+            if (pendingFirstChunk !== null) {
+              const isRevision = key.startsWith(pendingFirstChunk.key) || pendingFirstChunk.key.startsWith(key);
+              if (isRevision) {
+                clearTimeout(firstResultTimer);
+                pendingFirstChunk = { chunk, key };
+                firstResultTimer = setTimeout(() => {
+                  if (pendingFirstChunk) {
+                    const p = pendingFirstChunk; pendingFirstChunk = null;
+                    committedChunks.add(p.key); lastCommitTime = Date.now(); lastCommitKey = p.key;
+                    finalTranscript += p.chunk + ' '; addItems([p.chunk]);
+                  }
+                }, 800);
+                continue;
+              } else {
+                clearTimeout(firstResultTimer);
+                const p = pendingFirstChunk; pendingFirstChunk = null;
+                committedChunks.add(p.key); lastCommitTime = Date.now(); lastCommitKey = p.key;
+                finalTranscript += p.chunk + ' '; addItems([p.chunk]);
+              }
+            }
+            committedChunks.add(key);
+            lastCommitTime = now; lastCommitKey = key;
+            finalTranscript += chunk + ' '; addItems([chunk]);
           } else {
             interim = e.results[i][0].transcript;
           }
         }
-        // Show interim (in-progress) text as preview, clear once committed
         setPreview(interim || (finalTranscript ? '✓ ' + finalTranscript.trim() : 'Listening…'));
       };
 
       recognition.onerror = (e) => {
         if (e.error === 'not-allowed') {
           // Most common cause: HTTP instead of HTTPS
-          showError('Mic blocked — the app must be served over HTTPS for voice to work. Try Netlify Drop (see README).');
+          showError('mic blocked — needs HTTPS to work. deploy via Netlify (see README).');
           stopRecording(false);
         } else if (e.error === 'network') {
-          showError('Network required for voice recognition');
+          showError('network required for voice recognition');
           stopRecording(false);
         }
         // 'no-speech' is normal — Chrome stops on silence, onend restarts
@@ -813,6 +901,7 @@
         if (recording) {
           if (restartCount < MAX_RESTARTS) {
             restartCount++;
+            isRestart = true;
             try { recognition.start(); } catch(_) {}
           } else {
             commitTranscript();
@@ -831,8 +920,8 @@
 
     function startRecording() {
       clearError();
-      finalTranscript = '';
-      try { recognition.start(); } catch(e) { showError('Could not start mic'); }
+      // isRestart=false so onstart treats this as a fresh session
+      try { recognition.start(); } catch(e) { showError('could not start mic'); }
     }
 
     function stopRecording(manual) {
