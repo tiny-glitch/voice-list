@@ -2,6 +2,8 @@
 
 A voice-first task list PWA. Tap the mic, speak your items, and they appear as a checklist. Simple, offline-capable, no accounts, no cloud sync.
 
+**[Live Demo](https://voicenote-list.netlify.app)**
+
 ## Features
 
 - Voice input via the Web Speech API
