@@ -126,6 +126,18 @@
     .empty-state svg { opacity: 0.55; }
     .empty-state p { font-size: 13px; font-family: 'DM Mono', monospace; }
     .empty-sub { font-size: 12px !important; color: var(--muted2) !important; margin-top: -4px; }
+    .empty-hint {
+      margin-top: 10px;
+      padding-top: 12px;
+      border-top: 0.5px dashed var(--border2);
+      width: 70%;
+      max-width: 260px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .empty-hint p { font-size: 12px !important; color: var(--muted2) !important; font-family: 'DM Mono', monospace !important; margin: 0; text-align: center; }
+    .empty-hint .empty-hint-example { font-size: 11px !important; opacity: 0.75; }
 
     /* ── List items ── */
     .list-item {
@@ -296,6 +308,21 @@
 
     .transcript-preview.visible { display: block; }
 
+    /* Persistent hint shown below transcript while recording */
+    .transcript-hint {
+      font-size: 11px;
+      color: var(--muted2);
+      line-height: 1.4;
+      padding: 0 2px 8px 10px;
+      display: none;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      margin-top: -4px;
+      margin-bottom: 4px;
+    }
+    .transcript-hint.visible { display: block; }
+
     .input-row {
       display: flex;
       gap: 8px;
@@ -369,7 +396,7 @@
       border-radius: 10px;
       padding: 0 14px;
       font-family: 'DM Sans', sans-serif;
-      font-size: 15px;
+      font-size: 16px;
       color: var(--text);
       outline: none;
       transition: border-color .15s;
@@ -440,7 +467,7 @@
   <header>
     <div class="header-left">
       <span class="app-name">voicelist</span>
-      <span style="font-size:10px;color:#333;font-family:monospace;">v14</span>
+      <span style="font-size:10px;color:#333;font-family:monospace;">v15</span>
       <span class="item-count" id="item-count"></span>
     </div>
     <button class="clear-done-btn" id="clear-done-btn" onclick="clearDone()">clear done</button>
@@ -456,13 +483,18 @@
         <line x1="8" y1="21" x2="16" y2="21"/>
       </svg>
       <p>no items yet</p>
-      <p class="empty-sub">tap the mic or type to add</p>
+      <p class="empty-sub">tap mic or type to add</p>
+      <div class="empty-hint">
+        <p>on mic, use "and" between items</p>
+        <p class="empty-hint-example">e.g. "milk and bread and eggs" adds 3 items</p>
+      </div>
     </div>
   </div>
 
   <!-- Input bar pinned to bottom -->
   <div class="input-bar">
     <div class="transcript-preview" id="transcript-preview"></div>
+    <div class="transcript-hint" id="transcript-hint">say "and" between items — e.g. "milk and bread and eggs"</div>
     <div class="input-row">
       <input
         class="text-input"
@@ -474,7 +506,7 @@
         spellcheck="false"
         onkeydown="handleKey(event)"
       >
-      <button class="add-btn" onclick="addFromInput()">add</button>
+      <button class="add-btn" onmousedown="event.preventDefault()" ontouchstart="event.preventDefault()" onclick="addFromInput()">add</button>
       <button class="mic-btn" id="mic-btn" onclick="toggleMic()" aria-label="Toggle voice input">
         <svg viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect class="mic-icon" x="9" y="2" width="6" height="11" rx="3"/>
@@ -765,8 +797,11 @@
       const el = document.getElementById('text-input');
       const val = el.value.trim();
       if (!val) return;
+      const wasFocused = document.activeElement === el;
       addItems([val]);
       el.value = '';
+      // Keep keyboard up for rapid entry on mobile
+      if (wasFocused) el.focus();
     }
 
     function handleKey(e) {
@@ -939,6 +974,7 @@
     function setRecording(on) {
       recording = on;
       document.getElementById('mic-btn').classList.toggle('recording', on);
+      document.getElementById('transcript-hint').classList.toggle('visible', on);
     }
 
     function setPreview(text) {
