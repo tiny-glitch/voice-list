@@ -43,6 +43,15 @@
       -webkit-font-smoothing: antialiased;
     }
 
+    /* Lock html to viewport so iOS can't scroll the document
+       when the keyboard appears. Only .list-area scrolls. */
+    html {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      overflow: hidden;
+    }
+
     body {
       display: flex;
       flex-direction: column;
@@ -467,7 +476,7 @@
   <header>
     <div class="header-left">
       <span class="app-name">voicelist</span>
-      <span style="font-size:10px;color:#333;font-family:monospace;">v15</span>
+      <span style="font-size:10px;color:#333;font-family:monospace;">v16</span>
       <span class="item-count" id="item-count"></span>
     </div>
     <button class="clear-done-btn" id="clear-done-btn" onclick="clearDone()">clear done</button>
@@ -506,7 +515,7 @@
         spellcheck="false"
         onkeydown="handleKey(event)"
       >
-      <button class="add-btn" onmousedown="event.preventDefault()" ontouchstart="event.preventDefault()" onclick="addFromInput()">add</button>
+      <button class="add-btn" onclick="addFromInput()">add</button>
       <button class="mic-btn" id="mic-btn" onclick="toggleMic()" aria-label="Toggle voice input">
         <svg viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect class="mic-icon" x="9" y="2" width="6" height="11" rx="3"/>
@@ -1009,6 +1018,17 @@
     load();
     render();
     initSpeech();
+
+    // iOS keyboard guard: prevent the document itself from scrolling
+    // when the keyboard appears. If iOS tries to push the page up to
+    // reveal the focused input, snap the window back to 0.
+    function lockWindowScroll() { window.scrollTo(0, 0); }
+    document.getElementById('text-input').addEventListener('focus', lockWindowScroll);
+    document.getElementById('text-input').addEventListener('blur', lockWindowScroll);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', lockWindowScroll);
+      window.visualViewport.addEventListener('scroll', lockWindowScroll);
+    }
   </script>
 </body>
 </html>
