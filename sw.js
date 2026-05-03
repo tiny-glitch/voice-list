@@ -1,7 +1,7 @@
 // VoiceList service worker
 // Bump CACHE_VERSION whenever you deploy a new version of the app
 // to force clients to fetch fresh assets.
-const CACHE_VERSION = 'voicelist-v16';
+const CACHE_VERSION = 'voicelist-v15';
 
 const ASSETS = [
   './',
